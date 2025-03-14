@@ -26,7 +26,7 @@ io.on('connection', (socket) => {
             name: playerInfo.name,
             x: playerInfo.x,
             y: playerInfo.y,
-            health: 100,
+            health: playerInfo.health || 4,
             score: 0
         };
         
@@ -45,12 +45,35 @@ io.on('connection', (socket) => {
         }
     });
 
+    socket.on('playerDamaged', (playerInfo) => {
+        if (players[socket.id]) {
+            players[socket.id].health = playerInfo.health;
+            if (playerInfo.health <= 0) {
+                // Find the player who fired the last shot
+                const killerId = playerInfo.killerId;
+                if (killerId && players[killerId]) {
+                    players[killerId].score += 1;
+                    io.emit('scoreUpdated', {
+                        id: killerId,
+                        score: players[killerId].score
+                    });
+                }
+            }
+            io.emit('playerDamaged', {
+                id: socket.id,
+                health: playerInfo.health
+            });
+        }
+    });
+
     socket.on('projectileFired', (projectileInfo) => {
         const projectile = {
             id: Date.now(),
             x: projectileInfo.x,
             y: projectileInfo.y,
-            playerId: socket.id
+            playerId: socket.id,
+            velocityX: projectileInfo.velocityX,
+            velocityY: projectileInfo.velocityY
         };
         projectiles.push(projectile);
         io.emit('projectileFired', projectile);
