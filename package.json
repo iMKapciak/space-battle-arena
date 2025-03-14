@@ -1,0 +1,1 @@
+{"name": "space-battle-arena","version": "1.0.0","description": "A multiplayer space battle game","main": "server/server.js","scripts": {"start": "node server/server.js"},"dependencies": {"express": "^4.17.1","socket.io": "^4.4.1"}}
