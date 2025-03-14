@@ -2,24 +2,212 @@
 <html>
 <head>
     <title>Space Battle Arena</title>
-    <link rel="stylesheet" href="styles.css">
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000033;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        #login-screen, #lobby-screen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            background: rgba(0, 0, 51, 0.9);
+            padding: 20px;
+            border-radius: 10px;
+            border: 2px solid #4444ff;
+        }
+        #game-container {
+            display: none;
+        }
+        input[type="text"] {
+            padding: 10px;
+            margin: 10px;
+            border-radius: 5px;
+            border: 1px solid #4444ff;
+            background: rgba(0, 0, 51, 0.5);
+            color: white;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 10px;
+            border-radius: 5px;
+            border: none;
+            background: #4444ff;
+            color: white;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #5555ff;
+        }
+        #player-list {
+            margin: 20px 0;
+            text-align: left;
+            min-width: 200px;
+        }
+        .player-item {
+            padding: 5px;
+            margin: 5px 0;
+            border-radius: 3px;
+            background: rgba(0, 0, 51, 0.5);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .ready {
+            color: #00ff00;
+        }
+        .not-ready {
+            color: #ff0000;
+        }
+        #score-display {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-size: 20px;
+        }
+    </style>
 </head>
 <body>
-    <div id="game-container">
-        <div id="login-screen">
-            <h1>Space Battle Arena</h1>
-            <input type="text" id="player-name" placeholder="Enter your name">
-            <button onclick="startGame()">Join Game</button>
-        </div>
-        <div id="game-ui" style="display: none;">
-            <div id="score">Score: <span id="score-value">0</span></div>
-            <div id="health">Health: <span id="health-value">100</span></div>
-        </div>
-        <div id="game-canvas"></div>
+    <div id="login-screen">
+        <h2>Space Battle Arena</h2>
+        <input type="text" id="player-name" placeholder="Enter your name">
+        <button onclick="joinLobby()">Join Lobby</button>
     </div>
+
+    <div id="lobby-screen" style="display: none;">
+        <h2>Game Lobby</h2>
+        <div id="countdown" style="display: none; font-size: 24px; margin: 20px 0; color: #4444ff;">
+            Game starting in: <span id="countdown-value">10</span>
+        </div>
+        <div id="player-list">
+            <!-- Players will be listed here -->
+        </div>
+        <div id="lobby-status" style="margin: 10px 0; color: #888;">
+            Waiting for more players...
+        </div>
+        <button id="ready-button" onclick="toggleReady()">Ready</button>
+    </div>
+
+    <div id="game-container">
+        <div id="score-display">Score: <span id="score-value">0</span></div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.min.js"></script>
     <script src="js/game.js"></script>
-    <script src="js/client.js"></script>
+    <script>
+        let isReady = false;
+        
+        function joinLobby() {
+            const playerName = document.getElementById('player-name').value.trim();
+            if (playerName) {
+                document.getElementById('login-screen').style.display = 'none';
+                document.getElementById('lobby-screen').style.display = 'block';
+                
+                // Initialize socket and emit join event
+                if (!gameState.socket) {
+                    gameState.socket = io();
+                    
+                    // Setup socket event handlers
+                    gameState.socket.on('updateLobby', function(players) {
+                        updatePlayerList(players);
+                    });
+                    
+                    gameState.socket.on('countdownStarted', function(time) {
+                        showCountdown(time);
+                    });
+                    
+                    gameState.socket.on('countdownUpdate', function(time) {
+                        document.getElementById('countdown-value').textContent = time;
+                    });
+                    
+                    gameState.socket.on('countdownCancelled', function() {
+                        hideCountdown();
+                        const readyButton = document.getElementById('ready-button');
+                        isReady = false;
+                        readyButton.textContent = 'Click when ready';
+                        readyButton.className = 'not-ready';
+                    });
+                    
+                    gameState.socket.on('startGame', function(players) {
+                        startGame();
+                    });
+                }
+                
+                // Emit join event
+                gameState.socket.emit('playerJoined', {
+                    name: playerName,
+                    x: config.width / 2,
+                    y: config.height / 2,
+                    rotation: 0,
+                    health: 4
+                });
+            }
+        }
+
+        function toggleReady() {
+            const readyButton = document.getElementById('ready-button');
+            isReady = !isReady;
+            readyButton.textContent = isReady ? 'Ready!' : 'Click when ready';
+            readyButton.className = isReady ? 'ready' : 'not-ready';
+            
+            if (gameState && gameState.socket) {
+                gameState.socket.emit('toggleReady');
+            }
+        }
+
+        function updatePlayerList(players) {
+            const playerList = document.getElementById('player-list');
+            playerList.innerHTML = '';
+            
+            Object.values(players).forEach(player => {
+                const playerItem = document.createElement('div');
+                playerItem.className = `player-item ${player.ready ? 'ready' : 'not-ready'}`;
+                playerItem.innerHTML = `
+                    ${player.name} - <span class="${player.ready ? 'ready' : 'not-ready'}">${player.ready ? 'Ready' : 'Not Ready'}</span>
+                `;
+                playerList.appendChild(playerItem);
+            });
+            
+            // Update lobby status
+            const lobbyStatus = document.getElementById('lobby-status');
+            const playerCount = Object.keys(players).length;
+            const readyCount = Object.values(players).filter(p => p.ready).length;
+            
+            if (playerCount < 2) {
+                lobbyStatus.textContent = 'Waiting for more players...';
+            } else {
+                lobbyStatus.textContent = `${readyCount}/${playerCount} players ready`;
+            }
+        }
+
+        function showCountdown(time) {
+            const countdownDiv = document.getElementById('countdown');
+            const countdownValue = document.getElementById('countdown-value');
+            const lobbyStatus = document.getElementById('lobby-status');
+            
+            countdownDiv.style.display = 'block';
+            countdownValue.textContent = time;
+            lobbyStatus.textContent = 'All players ready! Game starting soon...';
+        }
+
+        function hideCountdown() {
+            const countdownDiv = document.getElementById('countdown');
+            countdownDiv.style.display = 'none';
+        }
+
+        function startGame() {
+            document.getElementById('lobby-screen').style.display = 'none';
+            document.getElementById('game-container').style.display = 'block';
+            document.getElementById('score-display').style.display = 'block';
+        }
+    </script>
 </body>
 </html>
