@@ -39,17 +39,41 @@ gameState.socket.on('countdownStarted', function(time) {
     gameState.isCountdownActive = true;
 });
 
-// Modified startGame event handler
-gameState.socket.on('startGame', function(players) {
-    console.log('Game starting with players:', players);
-    gameState.spawnPositions = players;
-    gameState.isCountdownActive = false;
+// Setup countdown handlers
+gameState.socket.on('countdownUpdate', time => {
+    console.log('Countdown update:', time);
+    if (!game || !game.scene.scenes[0]) return;
     
-    // Only initialize the game after receiving spawn positions
-    if (!game) {
-        startGame(); // Show game container
-        game = new Phaser.Game(config);
+    const scene = game.scene.scenes[0];
+    
+    if (gameState.countdownText) {
+        if (time > 0) {
+            gameState.countdownText.setText(time.toString());
+        } else {
+            gameState.countdownText.setText('GO!');
+            scene.tweens.add({
+                targets: gameState.countdownText,
+                alpha: 0,
+                duration: 500,
+                onComplete: () => {
+                    if (gameState.countdownText) {
+                        gameState.countdownText.destroy();
+                        gameState.countdownText = null;
+                    }
+                }
+            });
+            gameState.isCountdownActive = false;
+            console.log('Countdown finished, controls enabled');
+        }
     }
+});
+
+gameState.socket.on('countdownCancelled', () => {
+    console.log('Countdown cancelled');
+    if (gameState.countdownText) {
+        gameState.countdownText.setText('Waiting...');
+    }
+    gameState.isCountdownActive = true;
 });
 
 gameState.socket.on('playerMoved', function(playerInfo) {
@@ -77,12 +101,14 @@ gameState.socket.on('playerDamaged', function(playerInfo) {
     
     if (playerInfo.id === gameState.socket.id) {
         gameState.player.health = playerInfo.health;
+        gameState.player.shield = playerInfo.shield;
         updateHealthBar(gameState.player, gameState.playerHealthBar);
         
         if (gameState.player.health <= 0) {
             createExplosion(scene, gameState.player.x, gameState.player.y);
-            gameState.player.destroy();
-            gameState.playerHealthBar.destroy();
+            gameState.player.setVisible(false);
+            gameState.player.body.enable = false;
+            gameState.playerHealthBar.clear(); // Clear the health/shield bars
             
             // Show game over message
             const gameOverText = scene.add.text(config.width/2, config.height/2, 'Game Over!', {
@@ -97,18 +123,20 @@ gameState.socket.on('playerDamaged', function(playerInfo) {
                 targets: gameOverText,
                 alpha: 0,
                 duration: 1000,
-                delay: 2000
+                delay: 2000,
+                onComplete: () => gameOverText.destroy()
             });
         }
     } else if (gameState.otherPlayers[playerInfo.id]) {
         gameState.otherPlayers[playerInfo.id].sprite.health = playerInfo.health;
+        gameState.otherPlayers[playerInfo.id].sprite.shield = playerInfo.shield;
         updateHealthBar(gameState.otherPlayers[playerInfo.id].sprite, gameState.otherPlayers[playerInfo.id].healthBar);
         
         if (gameState.otherPlayers[playerInfo.id].sprite.health <= 0) {
             createExplosion(scene, gameState.otherPlayers[playerInfo.id].sprite.x, gameState.otherPlayers[playerInfo.id].sprite.y);
-            gameState.otherPlayers[playerInfo.id].sprite.destroy();
-            gameState.otherPlayers[playerInfo.id].healthBar.destroy();
-            delete gameState.otherPlayers[playerInfo.id];
+            gameState.otherPlayers[playerInfo.id].sprite.setVisible(false);
+            gameState.otherPlayers[playerInfo.id].sprite.body.enable = false;
+            gameState.otherPlayers[playerInfo.id].healthBar.clear(); // Clear the health/shield bars
             
             // Show victory message if you destroyed the enemy
             if (playerInfo.killerId === gameState.socket.id) {
@@ -124,7 +152,8 @@ gameState.socket.on('playerDamaged', function(playerInfo) {
                     targets: victoryText,
                     alpha: 0,
                     duration: 1000,
-                    delay: 2000
+                    delay: 2000,
+                    onComplete: () => victoryText.destroy()
                 });
             }
         }
@@ -142,6 +171,76 @@ gameState.socket.on('playerLeft', function(playerId) {
 gameState.socket.on('projectileFired', function(projectileInfo) {
     if (game && game.scene.scenes[0] && projectileInfo.playerId !== gameState.socket.id) {
         createProjectile(game.scene.scenes[0], projectileInfo);
+    }
+});
+
+// Chat message handler
+gameState.socket.on('chatMessage', function(chatMessage) {
+    const chatMessages = document.getElementById('chat-messages');
+    const messageDiv = document.createElement('div');
+    
+    if (chatMessage.type === 'system') {
+        messageDiv.style.color = '#888';
+        messageDiv.style.fontStyle = 'italic';
+        messageDiv.textContent = `${chatMessage.message}`;
+    } else {
+        messageDiv.innerHTML = `<strong>${chatMessage.sender}:</strong> ${chatMessage.message}`;
+    }
+    
+    chatMessages.appendChild(messageDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+});
+
+// Add respawn handler after other socket handlers
+gameState.socket.on('playerRespawned', function(playerInfo) {
+    if (!game || !game.scene.scenes[0]) return;
+    
+    if (playerInfo.id === gameState.socket.id) {
+        // Respawn local player
+        gameState.player.x = playerInfo.x;
+        gameState.player.y = playerInfo.y;
+        gameState.player.setVisible(true);
+        gameState.player.body.enable = true;
+        gameState.player.health = playerInfo.health;
+        updateHealthBar(gameState.player, gameState.playerHealthBar);
+        
+        // Show respawn message
+        const respawnText = game.scene.scenes[0].add.text(config.width/2, config.height/2, 'Respawned!', {
+            fontSize: '48px',
+            fill: '#00ff00',
+            stroke: '#ffffff',
+            strokeThickness: 2
+        }).setOrigin(0.5);
+        
+        // Fade out respawn message
+        game.scene.scenes[0].tweens.add({
+            targets: respawnText,
+            alpha: 0,
+            duration: 1000,
+            onComplete: () => respawnText.destroy()
+        });
+    } else {
+        // Respawn other player
+        if (gameState.otherPlayers[playerInfo.id]) {
+            const otherPlayer = gameState.otherPlayers[playerInfo.id].sprite;
+            otherPlayer.x = playerInfo.x;
+            otherPlayer.y = playerInfo.y;
+            otherPlayer.health = playerInfo.health;
+            otherPlayer.setVisible(true);
+            otherPlayer.body.enable = true;
+            updateHealthBar(otherPlayer, gameState.otherPlayers[playerInfo.id].healthBar);
+        }
+    }
+});
+
+// Add shield update handler
+gameState.socket.on('shieldUpdated', function(shieldInfo) {
+    if (shieldInfo.id === gameState.socket.id) {
+        gameState.player.shield = shieldInfo.shield;
+        updateHealthBar(gameState.player, gameState.playerHealthBar);
+    } else if (gameState.otherPlayers[shieldInfo.id]) {
+        gameState.otherPlayers[shieldInfo.id].sprite.shield = shieldInfo.shield;
+        updateHealthBar(gameState.otherPlayers[shieldInfo.id].sprite, gameState.otherPlayers[shieldInfo.id].healthBar);
     }
 });
 
@@ -163,6 +262,12 @@ function preload() {
 function create() {
     const self = this;
     console.log('Creating game scene...');
+    
+    // Clean up any existing countdown text first
+    if (gameState.countdownText) {
+        gameState.countdownText.destroy();
+        gameState.countdownText = null;
+    }
     
     // Wait for spawn positions if they're not available yet
     if (!gameState.spawnPositions || !gameState.spawnPositions[gameState.socket.id]) {
@@ -191,52 +296,21 @@ function create() {
     gameState.starfield = this.add.graphics();
     
     // Initialize game state variables
-    gameState.projectileSpeed = 1000;
+    gameState.projectileSpeed = 500;
     gameState.lastFired = 0;
     gameState.otherPlayers = {};
     gameState.score = 0;
     
-    // Create countdown text
-    gameState.countdownText = this.add.text(config.width/2, 100, 'Get Ready!', {
-        fontSize: '64px',
-        fill: '#ffffff',
-        stroke: '#000000',
-        strokeThickness: 4
-    }).setOrigin(0.5);
-    gameState.countdownText.setDepth(1);
-    
-    // Setup countdown handlers in the game scene
-    gameState.socket.on('countdownUpdate', time => {
-        console.log('Countdown update:', time);
-        if (gameState.countdownText) {
-            if (time > 0) {
-                gameState.countdownText.setText(time.toString());
-            } else if (time === 0) {
-                gameState.countdownText.setText('GO!');
-                // Fade out and destroy the text
-                this.tweens.add({
-                    targets: gameState.countdownText,
-                    alpha: 0,
-                    duration: 1000,
-                    onComplete: () => {
-                        if (gameState.countdownText) {
-                            gameState.countdownText.destroy();
-                            gameState.countdownText = null;
-                            gameState.isCountdownActive = false;
-                        }
-                    }
-                });
-            }
-        }
-    });
-    
-    gameState.socket.on('countdownCancelled', () => {
-        console.log('Countdown cancelled');
-        if (gameState.countdownText) {
-            gameState.countdownText.setText('Waiting...');
-        }
-        gameState.isCountdownActive = true;
-    });
+    // Create countdown text only if countdown is active
+    if (gameState.isCountdownActive) {
+        gameState.countdownText = this.add.text(config.width/2, 100, 'Get Ready!', {
+            fontSize: '64px',
+            fill: '#ffffff',
+            stroke: '#000000',
+            strokeThickness: 4
+        }).setOrigin(0.5);
+        gameState.countdownText.setDepth(1);
+    }
     
     // Create player and setup game objects
     console.log('Setting up game objects with spawn positions:', gameState.spawnPositions);
@@ -265,6 +339,7 @@ function setupGameObjects(scene) {
     gameState.player = scene.physics.add.sprite(spawnData.x, spawnData.y, 'ship');
     gameState.player.setScale(0.2);
     gameState.player.health = 4;
+    gameState.player.shield = 4;
     // Set a smaller hitbox for more precise collisions
     gameState.player.body.setSize(gameState.player.width * 0.5, gameState.player.height * 0.5);
     gameState.player.body.setOffset(gameState.player.width * 0.25, gameState.player.height * 0.25);
@@ -283,6 +358,7 @@ function setupGameObjects(scene) {
             otherPlayer.setScale(0.2);
             otherPlayer.setTint(0xff0000);
             otherPlayer.health = playerData.health;
+            otherPlayer.shield = 4;
             // Set a smaller hitbox for more precise collisions
             otherPlayer.body.setSize(otherPlayer.width * 0.5, otherPlayer.height * 0.5);
             otherPlayer.body.setOffset(otherPlayer.width * 0.25, otherPlayer.height * 0.25);
@@ -313,14 +389,26 @@ function updateHealthBar(ship, healthBar) {
     const barWidth = 40;
     const barHeight = 5;
     const healthWidth = (ship.health / 4) * barWidth;
+    const shieldWidth = (ship.shield / 4) * barWidth;
+    const barY = ship.y - 30;
     
+    // Health bar (bottom)
     // Background (red)
     healthBar.fillStyle(0xff0000, 1);
-    healthBar.fillRect(ship.x - barWidth/2, ship.y - 30, barWidth, barHeight);
+    healthBar.fillRect(ship.x - barWidth/2, barY, barWidth, barHeight);
     
     // Health (green)
     healthBar.fillStyle(0x00ff00, 1);
-    healthBar.fillRect(ship.x - barWidth/2, ship.y - 30, healthWidth, barHeight);
+    healthBar.fillRect(ship.x - barWidth/2, barY, healthWidth, barHeight);
+    
+    // Shield bar (top, 3 pixels above health bar)
+    // Shield background (dark blue)
+    healthBar.fillStyle(0x000066, 1);
+    healthBar.fillRect(ship.x - barWidth/2, barY - 6, barWidth, barHeight);
+    
+    // Shield (bright blue)
+    healthBar.fillStyle(0x0099ff, 1);
+    healthBar.fillRect(ship.x - barWidth/2, barY - 6, shieldWidth, barHeight);
 }
 
 function createExplosion(scene, x, y) {
@@ -356,31 +444,52 @@ function createExplosion(scene, x, y) {
 }
 
 function handleProjectileHit(ship, projectile) {
-    // Get the projectile's owner ID from the projectile data
     const projectileOwnerId = projectile.getData('playerId');
     
-    // Don't damage if the projectile belongs to the ship's owner
     if ((ship === gameState.player && projectileOwnerId === gameState.socket.id) || 
         (gameState.otherPlayers[projectileOwnerId] && gameState.otherPlayers[projectileOwnerId].sprite === ship)) {
         return;
     }
     
     if (ship === gameState.player) {
-        gameState.player.health--;
-        gameState.socket.emit('playerDamaged', {
-            id: gameState.socket.id,
-            health: gameState.player.health,
-            killerId: projectileOwnerId
-        });
+        if (gameState.player.shield > 0) {
+            gameState.player.shield--;
+            gameState.socket.emit('playerDamaged', {
+                id: gameState.socket.id,
+                shield: gameState.player.shield,
+                health: gameState.player.health,
+                killerId: projectileOwnerId
+            });
+        } else {
+            gameState.player.health--;
+            gameState.socket.emit('playerDamaged', {
+                id: gameState.socket.id,
+                shield: 0,
+                health: gameState.player.health,
+                killerId: projectileOwnerId
+            });
+        }
     } else {
         const playerId = Object.keys(gameState.otherPlayers).find(id => gameState.otherPlayers[id].sprite === ship);
         if (playerId) {
-            gameState.otherPlayers[playerId].sprite.health--;
-            gameState.socket.emit('playerDamaged', {
-                id: playerId,
-                health: gameState.otherPlayers[playerId].sprite.health,
-                killerId: projectileOwnerId
-            });
+            const otherPlayer = gameState.otherPlayers[playerId].sprite;
+            if (otherPlayer.shield > 0) {
+                otherPlayer.shield--;
+                gameState.socket.emit('playerDamaged', {
+                    id: playerId,
+                    shield: otherPlayer.shield,
+                    health: otherPlayer.health,
+                    killerId: projectileOwnerId
+                });
+            } else {
+                otherPlayer.health--;
+                gameState.socket.emit('playerDamaged', {
+                    id: playerId,
+                    shield: 0,
+                    health: otherPlayer.health,
+                    killerId: projectileOwnerId
+                });
+            }
         }
     }
     projectile.destroy();
@@ -521,8 +630,16 @@ function update() {
         }
     });
     
-    // Only allow player movement and shooting if countdown is finished and player is alive
-    if (!gameState.isCountdownActive && gameState.player.active && gameState.player.health > 0) {
+    // Debug logging
+    console.log('Game state:', {
+        isCountdownActive: gameState.isCountdownActive,
+        playerActive: gameState.player.active,
+        playerVisible: gameState.player.visible,
+        playerHealth: gameState.player.health
+    });
+    
+    // Allow player movement and shooting if player is alive and countdown is finished
+    if (gameState.player.active && gameState.player.visible && gameState.player.health > 0) {
         // Player movement
         let moving = false;
         if (gameState.cursors.left.isDown) {
@@ -545,7 +662,7 @@ function update() {
         // Update player rotation to face mouse pointer
         const angle = Phaser.Math.Angle.Between(
             gameState.player.x, gameState.player.y,
-            gameState.pointer.x, gameState.pointer.y
+            this.input.mousePointer.x, this.input.mousePointer.y
         );
         gameState.player.rotation = angle;
         
@@ -558,7 +675,7 @@ function update() {
         }
         
         // Fire projectiles with cooldown
-        if (gameState.pointer.isDown && this.time.now > gameState.lastFired) {
+        if (this.input.mousePointer.isDown && this.time.now > gameState.lastFired) {
             const velocityX = Math.cos(gameState.player.rotation);
             const velocityY = Math.sin(gameState.player.rotation);
             
@@ -578,8 +695,52 @@ function update() {
         }
     }
     
-    // Update health bar position only if player is alive
-    if (gameState.player.active && gameState.player.health > 0) {
+    // Update health bar position
+    if (gameState.player.active && gameState.player.visible) {
         updateHealthBar(gameState.player, gameState.playerHealthBar);
     }
 }
+
+// Setup chat input handlers when the page loads
+document.addEventListener('DOMContentLoaded', function() {
+    const chatInput = document.getElementById('chat-input');
+    const chatSend = document.getElementById('chat-send');
+    
+    function sendMessage() {
+        const message = chatInput.value.trim();
+        if (message) {
+            gameState.socket.emit('chatMessage', message);
+            chatInput.value = '';
+        }
+    }
+    
+    chatSend.addEventListener('click', sendMessage);
+    
+    chatInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            sendMessage();
+        }
+    });
+});
+
+// Modified startGame event handler
+gameState.socket.on('startGame', function(players) {
+    console.log('Game starting with players:', players);
+    gameState.spawnPositions = players;
+    gameState.isCountdownActive = false; // Set to false initially
+    
+    // Destroy any existing countdown text before creating the game
+    if (gameState.countdownText) {
+        gameState.countdownText.destroy();
+        gameState.countdownText = null;
+    }
+    
+    // Only initialize the game after receiving spawn positions
+    if (!game) {
+        startGame(); // Show game container
+        game = new Phaser.Game(config);
+    } else {
+        // If game exists, restart the scene
+        game.scene.scenes[0].scene.restart();
+    }
+});

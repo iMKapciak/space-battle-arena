@@ -21,6 +21,9 @@ let gameStartTimeout = null;
 // Game configuration
 const GAME_WIDTH = 800;
 const GAME_HEIGHT = 600;
+const MAX_SHIELD = 4;
+const SHIELD_REGEN_RATE = 0.5; // Shield points per second
+const SHIELD_REGEN_DELAY = 3000; // Time in ms before shield starts regenerating
 
 function getSpawnPosition(playerCount, totalPlayers) {
     // Calculate spawn positions in a circle
@@ -30,6 +33,27 @@ function getSpawnPosition(playerCount, totalPlayers) {
         x: GAME_WIDTH / 2 + Math.cos(angle) * radius,
         y: GAME_HEIGHT / 2 + Math.sin(angle) * radius
     };
+}
+
+function respawnPlayer(playerId) {
+    const numPlayers = Object.keys(players).length;
+    const playerIndex = Object.keys(players).indexOf(playerId);
+    const spawnPos = getSpawnPosition(playerIndex, numPlayers);
+    
+    // Reset player health and shield
+    players[playerId].health = 4;
+    players[playerId].shield = MAX_SHIELD;
+    players[playerId].x = spawnPos.x;
+    players[playerId].y = spawnPos.y;
+    
+    // Emit respawn event to all clients
+    io.emit('playerRespawned', {
+        id: playerId,
+        x: spawnPos.x,
+        y: spawnPos.y,
+        health: 4,
+        shield: MAX_SHIELD
+    });
 }
 
 function startCountdown() {
@@ -113,6 +137,24 @@ function resetGame() {
     io.emit('updateLobby', players);
 }
 
+// Add shield regeneration interval
+setInterval(() => {
+    if (!gameStarted) return;
+    
+    const currentTime = Date.now();
+    Object.keys(players).forEach(playerId => {
+        const player = players[playerId];
+        if (player.shield < MAX_SHIELD && 
+            currentTime - player.lastDamageTime > SHIELD_REGEN_DELAY) {
+            player.shield = Math.min(MAX_SHIELD, player.shield + SHIELD_REGEN_RATE);
+            io.emit('shieldUpdated', {
+                id: playerId,
+                shield: player.shield
+            });
+        }
+    });
+}, 1000);
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
     console.log('A player connected');
@@ -126,6 +168,8 @@ io.on('connection', (socket) => {
             y: playerInfo.y,
             rotation: playerInfo.rotation,
             health: playerInfo.health,
+            shield: MAX_SHIELD,
+            lastDamageTime: 0,
             score: 0,
             ready: false
         };
@@ -178,18 +222,35 @@ io.on('connection', (socket) => {
         if (players[socket.id] && gameStarted) {
             const player = players[damageData.id];
             if (player) {
-                player.health = damageData.health;
+                player.lastDamageTime = Date.now();
                 
-                // If player died and there was a killer, update score
-                if (player.health <= 0 && damageData.killerId && players[damageData.killerId]) {
-                    players[damageData.killerId].score += 1;
-                    io.emit('scoreUpdated', {
-                        id: damageData.killerId,
-                        score: players[damageData.killerId].score
+                // If player has shield, damage shield first
+                if (player.shield > 0) {
+                    player.shield--;
+                    io.emit('shieldUpdated', {
+                        id: damageData.id,
+                        shield: player.shield
                     });
+                } else {
+                    // Only damage health if shield is depleted
+                    player.health = damageData.health;
+                    
+                    // If player died and there was a killer, update score
+                    if (player.health <= 0 && damageData.killerId && players[damageData.killerId]) {
+                        players[damageData.killerId].score += 1;
+                        io.emit('scoreUpdated', {
+                            id: damageData.killerId,
+                            score: players[damageData.killerId].score
+                        });
+                        
+                        // Schedule respawn after 3 seconds
+                        setTimeout(() => {
+                            respawnPlayer(damageData.id);
+                        }, 3000);
+                    }
+                    
+                    io.emit('playerDamaged', damageData);
                 }
-                
-                io.emit('playerDamaged', damageData);
             }
         }
     });

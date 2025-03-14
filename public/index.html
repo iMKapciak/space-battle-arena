@@ -72,6 +72,49 @@
             color: white;
             font-size: 20px;
         }
+        #lobby-container {
+            text-align: center;
+            margin: 20px;
+        }
+        #chat-container {
+            width: 400px;
+            margin: 20px auto;
+            border: 1px solid #333;
+            border-radius: 5px;
+            background-color: rgba(0, 0, 0, 0.8);
+            padding: 10px;
+        }
+        #chat-messages {
+            height: 200px;
+            overflow-y: auto;
+            margin-bottom: 10px;
+            padding: 10px;
+            border: 1px solid #444;
+            border-radius: 3px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: #fff;
+            text-align: left;
+        }
+        #chat-input {
+            width: 80%;
+            padding: 5px;
+            border: 1px solid #444;
+            border-radius: 3px;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: #fff;
+            margin-right: 5px;
+        }
+        #chat-send {
+            padding: 5px 10px;
+            background-color: #007bff;
+            border: none;
+            border-radius: 3px;
+            color: white;
+            cursor: pointer;
+        }
+        #chat-send:hover {
+            background-color: #0056b3;
+        }
     </style>
 </head>
 <body>
@@ -93,6 +136,15 @@
             Waiting for more players...
         </div>
         <button id="ready-button" onclick="toggleReady()">Ready</button>
+        
+        <!-- Add chat container -->
+        <div id="chat-container">
+            <div id="chat-messages"></div>
+            <div>
+                <input type="text" id="chat-input" placeholder="Type your message..." maxlength="100">
+                <button id="chat-send">Send</button>
+            </div>
+        </div>
     </div>
 
     <div id="game-container">
